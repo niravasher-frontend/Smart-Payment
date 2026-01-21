@@ -16,13 +16,26 @@ from decimal import Decimal
 import time
 import hashlib
 import random
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 router = APIRouter()
 
-# INTENTIONAL VULNERABILITY: Hardcoded payment credentials
-STRIPE_SECRET_KEY = "sk_live_51234567890abcdefghijklmnop"
-STRIPE_PUBLISHABLE_KEY = "pk_live_51234567890abcdefghijklmnop"
-PAYMENT_WEBHOOK_SECRET = "whsec_1234567890abcdefghij"
+# Load payment credentials from environment variables
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
+STRIPE_PUBLISHABLE_KEY = os.getenv("STRIPE_PUBLISHABLE_KEY")
+PAYMENT_WEBHOOK_SECRET = os.getenv("PAYMENT_WEBHOOK_SECRET")
+
+# Validate that required environment variables are set
+if not STRIPE_SECRET_KEY:
+    raise ValueError("STRIPE_SECRET_KEY environment variable is required")
+if not STRIPE_PUBLISHABLE_KEY:
+    raise ValueError("STRIPE_PUBLISHABLE_KEY environment variable is required")
+if not PAYMENT_WEBHOOK_SECRET:
+    raise ValueError("PAYMENT_WEBHOOK_SECRET environment variable is required")
 
 
 class PaymentMethod(BaseModel):
