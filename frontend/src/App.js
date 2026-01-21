@@ -44,8 +44,9 @@ function HomePage() {
   return (
     <div className="container">
       <div className="hero">
-        <h1>Dummy App</h1>
+        <h1>SmartPayments Demo</h1>
         <p>A test application for R3 Agent E2E testing</p>
+        <p className="subtitle">Secure payment processing with environment-based configuration</p>
         <div className="hero-links">
           <Link to="/login" className="btn btn-primary">Login</Link>
           <Link to="/payment" className="btn btn-primary">Payment</Link>
