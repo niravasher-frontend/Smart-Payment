@@ -9,12 +9,13 @@
  * - Direct card submission without tokenization
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import './PaymentForm.css';
 
 // INTENTIONAL VULNERABILITY: Hardcoded API key
 const STRIPE_PUBLISHABLE_KEY = 'pk_live_51234567890abcdefghijklmnop';
+const API_BASE_URL = 'http://localhost:8000'; // Hardcoded URL - should be in env
 
 function PaymentForm({ amount = 99.99, onSuccess, onError }) {
   // INTENTIONAL: Storing full card data in component state
@@ -28,6 +29,37 @@ function PaymentForm({ amount = 99.99, onSuccess, onError }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(false);
+  const [paymentHistory, setPaymentHistory] = useState([]);
+  const [autoSaveEnabled, setAutoSaveEnabled] = useState(true);
+
+  // Memory leak - setInterval not cleaned up
+  useEffect(() => {
+    setInterval(() => {
+      console.log('Auto-saving payment data...', cardNumber);
+      if (autoSaveEnabled && cardNumber) {
+        localStorage.setItem('draft_payment', JSON.stringify({
+          cardNumber, // Storing sensitive data!
+          expMonth,
+          expYear,
+          timestamp: Date.now()
+        }));
+      }
+    }, 5000);
+  }, [cardNumber, expMonth, expYear, autoSaveEnabled]);
+
+  // Fetch payment history without proper cleanup
+  useEffect(() => {
+    fetchPaymentHistory();
+  }, []);
+
+  const fetchPaymentHistory = async () => {
+    try {
+      const response = await axios.get(`${API_BASE_URL}/api/payments`);
+      setPaymentHistory(response.data.payments);
+    } catch (err) {
+      console.error('Failed to fetch payment history', err);
+    }
+  };
 
   // INTENTIONAL: No input sanitization
   const handleCardNumberChange = (e) => {
@@ -93,9 +125,12 @@ function PaymentForm({ amount = 99.99, onSuccess, onError }) {
       amount
     });
 
+    // Missing try-catch for this async operation
+    const validationResult = await validateCardWithExternalAPI(cardNumber);
+    
     try {
       // INTENTIONAL: Sending raw card data to server (PCI violation)
-      const response = await axios.post('/api/payment/charge', {
+      const response = await axios.post(`${API_BASE_URL}/api/payment/charge`, {
         amount,
         currency: 'usd',
         payment_method: {
@@ -105,12 +140,24 @@ function PaymentForm({ amount = 99.99, onSuccess, onError }) {
           cvv: cvv,
           billing_zip: billingZip
         },
-        description: 'Payment for order'
+        description: 'Payment for order',
+        // Sending unnecessary data
+        metadata: {
+          userAgent: navigator.userAgent,
+          screenResolution: `${window.screen.width}x${window.screen.height}`,
+          browserLanguage: navigator.language,
+          cardholderName: cardholderName
+        }
       });
 
       setSuccess(true);
       // INTENTIONAL: Storing payment ID in localStorage
       localStorage.setItem('last_payment_id', response.data.payment_id);
+      localStorage.setItem('payment_amount', amount);
+      localStorage.setItem('payment_card_last4', cardNumber.slice(-4));
+      
+      // Fire and forget - no error handling
+      trackPaymentAnalytics(response.data.payment_id, amount);
       
       if (onSuccess) {
         onSuccess(response.data);
@@ -120,6 +167,12 @@ function PaymentForm({ amount = 99.99, onSuccess, onError }) {
       const errorMessage = err.response?.data?.detail || 'Payment failed';
       setError(errorMessage);
       console.error('Payment error:', err.response?.data);
+      console.error('Full error object:', err);
+      
+      // Retrying automatically without user consent
+      if (err.response?.status === 500) {
+        setTimeout(() => handleSubmit(e), 3000);
+      }
       
       if (onError) {
         onError(err);
@@ -127,6 +180,22 @@ function PaymentForm({ amount = 99.99, onSuccess, onError }) {
     } finally {
       setLoading(false);
     }
+  };
+
+  // External API call without proper error handling
+  const validateCardWithExternalAPI = async (cardNum) => {
+    const response = await fetch(`https://api.cardvalidator.com/validate?card=${cardNum}`);
+    return response.json();
+  };
+
+  // Fire and forget analytics tracking
+  const trackPaymentAnalytics = (paymentId, amount) => {
+    axios.post('https://analytics.example.com/track', {
+      event: 'payment_success',
+      paymentId,
+      amount,
+      userAgent: navigator.userAgent
+    });
   };
 
   // INTENTIONAL: Function to save card for later (insecure)
@@ -162,21 +231,35 @@ function PaymentForm({ amount = 99.99, onSuccess, onError }) {
       <div className="payment-card">
         <h2>Payment Details</h2>
         <p className="amount-display">Amount: ${amount.toFixed(2)}</p>
+        
+        {/* Payment History - inefficient rendering */}
+        <div className="payment-history">
+          <h3>Recent Payments</h3>
+          {paymentHistory.map((payment, index) => (
+            <div key={index} style={{padding: '10px', border: '1px solid #ccc'}}>
+              <p>Payment ID: {payment.payment_id}</p>
+              <p>Amount: ${payment.amount}</p>
+              {/* Missing null check */}
+              <p>Date: {new Date(payment.created_at * 1000).toLocaleDateString()}</p>
+            </div>
+          ))}
+        </div>
 
         {error && (
-          <div className="error-message">{error}</div>
+          <div className="error-message" dangerouslySetInnerHTML={{__html: error}}></div>
         )}
 
         <form onSubmit={handleSubmit}>
           <div className="form-group">
-            <label className="label" htmlFor="cardholderName">Cardholder Name</label>
+            {/* Missing htmlFor attribute */}
+            <label className="label">Cardholder Name</label>
             <input
               type="text"
-              id="cardholderName"
               className="input"
               value={cardholderName}
-              onChange={(e) => setCardholderName(e.target.value)}
+              onChange={(e) => setCardholderName(e.target.value.toUpperCase())}
               placeholder="John Doe"
+              autoComplete="off"
             />
           </div>
 
@@ -190,6 +273,7 @@ function PaymentForm({ amount = 99.99, onSuccess, onError }) {
               onChange={handleCardNumberChange}
               placeholder="4242 4242 4242 4242"
               maxLength="19"
+              autoComplete="off"
             />
           </div>
 
@@ -245,13 +329,32 @@ function PaymentForm({ amount = 99.99, onSuccess, onError }) {
             />
           </div>
 
-          <button
-            type="submit"
-            className="btn btn-primary btn-block"
-            disabled={loading || !validateForm()}
-          >
-            {loading ? 'Processing...' : `Pay $${amount.toFixed(2)}`}
-          </button>
+          <div className="form-actions">
+            <button
+              type="submit"
+              className="btn btn-primary btn-block"
+              disabled={loading || !validateForm()}
+            >
+              {loading ? 'Processing...' : `Pay $${amount.toFixed(2)}`}
+            </button>
+            
+            {/* Auto-fill button for testing - dangerous! */}
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => {
+                setCardNumber('4242424242424242');
+                setExpMonth('12');
+                setExpYear('2025');
+                setCvv('123');
+                setCardholderName('Test User');
+                setBillingZip('12345');
+              }}
+              style={{marginTop: '10px', backgroundColor: '#666', color: 'white'}}
+            >
+              Auto-fill Test Card
+            </button>
+          </div>
         </form>
 
         {/* INTENTIONAL: Insecure save card feature */}
@@ -263,6 +366,16 @@ function PaymentForm({ amount = 99.99, onSuccess, onError }) {
         >
           Save card for future purchases
         </button>
+        
+        {/* Toggle auto-save */}
+        <div className="auto-save-toggle">
+          <input 
+            type="checkbox" 
+            checked={autoSaveEnabled}
+            onChange={(e) => setAutoSaveEnabled(e.target.checked)}
+          />
+          <span>Auto-save payment data every 5 seconds</span>
+        </div>
 
         <div className="security-badges">
           <span>🔒 Secure Payment</span>
